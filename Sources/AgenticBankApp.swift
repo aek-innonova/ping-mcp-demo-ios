@@ -17,20 +17,21 @@ struct AgenticBankApp: App {
     }
 }
 
+@MainActor
 final class AppState: ObservableObject {
     @Published var accountHolder: String = UserDefaults.standard.string(forKey: "accountHolder") ?? "alice"
     @Published var deviceToken: String?
     @Published var registrationStatus: String = "not registered"
     @Published var log: [String] = []
 
-    func append(_ line: String) {
-        DispatchQueue.main.async {
+    nonisolated func append(_ line: String) {
+        Task { @MainActor in
             self.log.insert("\(Self.time()) \(line)", at: 0)
             if self.log.count > 50 { self.log.removeLast() }
         }
     }
 
-    static func time() -> String {
+    nonisolated static func time() -> String {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
         return f.string(from: Date())
     }
