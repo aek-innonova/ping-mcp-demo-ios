@@ -63,9 +63,14 @@ struct ContentView: View {
     private func approve(_ p: PendingApproval) {
         let ctx = LAContext()
         var err: NSError?
-        let reason = "Approve transfer: \(p.body)"
-        if ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) {
-            ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { ok, _ in
+        let reason = "Approve payment: \(p.body)"
+        // Prefer Face ID; only fall back to device passcode if biometrics
+        // are unavailable on this device.
+        let policy: LAPolicy = ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err)
+            ? .deviceOwnerAuthenticationWithBiometrics
+            : .deviceOwnerAuthentication
+        if ctx.canEvaluatePolicy(policy, error: &err) {
+            ctx.evaluatePolicy(policy, localizedReason: reason) { ok, _ in
                 guard ok else { return }
                 Task { @MainActor in
                     let done = await BankAPI.approve(urlString: p.approveURL, state: state)

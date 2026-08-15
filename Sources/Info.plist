@@ -18,6 +18,8 @@
 	<string>APPL</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Approve payment requests with Face ID.</string>
 	<key>BankBaseURL</key>
 	<string>$(BANK_BASE_URL)</string>
 	<key>UILaunchScreen</key>
