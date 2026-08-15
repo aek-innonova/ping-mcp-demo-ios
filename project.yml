@@ -1,0 +1,26 @@
+# XcodeGen spec - the CI generates the Xcode project from this (no pbxproj in
+# git). Bundle id must match the registered App ID with Push capability.
+name: AgenticBank
+options:
+  bundleIdPrefix: dk.aek
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: L4AYY85TPR
+    SWIFT_VERSION: "5.9"
+targets:
+  AgenticBank:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dk.aek.agenticbank
+        INFOPLIST_FILE: Sources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/AgenticBank.entitlements
+        # BANK_BASE_URL is injected by CI from a repo secret (public repo -
+        # endpoints stay out of source); Info.plist references it
+        BANK_BASE_URL: "$(BANK_BASE_URL)"
