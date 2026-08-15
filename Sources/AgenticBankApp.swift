@@ -17,12 +17,20 @@ struct AgenticBankApp: App {
     }
 }
 
+struct PendingApproval: Identifiable {
+    let id = UUID()
+    let title: String
+    let body: String
+    let approveURL: String
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var accountHolder: String = UserDefaults.standard.string(forKey: "accountHolder") ?? "alice"
     @Published var deviceToken: String?
     @Published var registrationStatus: String = "not registered"
     @Published var log: [String] = []
+    @Published var pending: PendingApproval?
 
     nonisolated func append(_ line: String) {
         Task { @MainActor in
@@ -105,8 +113,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         case "DENY":
             state.append("denied transfer request")
         default:
-            // Tapped the notification body: bring app up; keep it simple.
-            state.append("opened from notification (use the Approve button)")
+            // Tapped the notification body -> show an in-app approval card
+            let content = response.notification.request.content
+            state.pending = PendingApproval(
+                title: content.title,
+                body: content.body,
+                approveURL: approveURL
+            )
+            state.append("opened transfer request in app")
         }
     }
 }

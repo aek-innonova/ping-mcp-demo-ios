@@ -1,4 +1,5 @@
 import SwiftUI
+import LocalAuthentication
 
 struct ContentView: View {
     @EnvironmentObject var state: AppState
@@ -6,6 +7,21 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
+                if let p = state.pending {
+                    Section("Transfer request") {
+                        Text(p.body).font(.headline)
+                        Text("Requested by your AI agent. Approve to execute.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button {
+                            approve(p)
+                        } label: {
+                            Label("Approve with Face ID", systemImage: "faceid")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button("Dismiss", role: .cancel) { state.pending = nil }
+                    }
+                }
                 Section("Account") {
                     HStack {
                         Text("Holder")
@@ -41,6 +57,26 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Agentic Bank")
+        }
+    }
+
+    private func approve(_ p: PendingApproval) {
+        let ctx = LAContext()
+        var err: NSError?
+        let reason = "Approve transfer: \(p.body)"
+        if ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) {
+            ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { ok, _ in
+                guard ok else { return }
+                Task { @MainActor in
+                    let done = await BankAPI.approve(urlString: p.approveURL, state: state)
+                    if done { state.pending = nil }
+                }
+            }
+        } else {
+            Task { @MainActor in
+                let done = await BankAPI.approve(urlString: p.approveURL, state: state)
+                if done { state.pending = nil }
+            }
         }
     }
 }

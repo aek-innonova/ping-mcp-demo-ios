@@ -27,8 +27,9 @@ enum BankAPI {
         }
     }
 
-    static func approve(urlString: String, state: AppState) async {
-        guard let url = URL(string: urlString) else { return }
+    @discardableResult
+    static func approve(urlString: String, state: AppState) async -> Bool {
+        guard let url = URL(string: urlString) else { return false }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         do {
@@ -37,11 +38,13 @@ enum BankAPI {
             let body = String(data: data, encoding: .utf8) ?? ""
             if code == 200, body.contains("Approved") {
                 state.append("transfer APPROVED and executed")
-            } else {
-                state.append("approve response: HTTP \(code)")
+                return true
             }
+            state.append("approve response: HTTP \(code)")
+            return false
         } catch {
             state.append("approve error: \(error.localizedDescription)")
+            return false
         }
     }
 }
