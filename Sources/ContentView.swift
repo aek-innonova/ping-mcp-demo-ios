@@ -37,7 +37,9 @@ struct RootView: View {
     @EnvironmentObject var state: AppState
     var body: some View {
         HomeView()
-            .fullScreenCover(item: $state.pending) { p in ApprovalView(pending: p) }
+            .fullScreenCover(item: $state.pending, onDismiss: {
+                Task { await BankAPI.refreshAccount(state: state, animated: true) }
+            }) { p in ApprovalView(pending: p) }
     }
 }
 
@@ -79,7 +81,9 @@ struct HomeView: View {
                 .opacity(0.8).padding(.top, 20)
             Text(state.balance.map(euro) ?? "—")
                 .font(.system(size: 40, weight: .bold, design: .rounded))
-                .monospacedDigit().padding(.top, 1)
+                .monospacedDigit()
+                .contentTransition(.numericText(countsDown: true))
+                .padding(.top, 1)
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 26)
@@ -295,10 +299,9 @@ struct ApprovalView: View {
                 let success = await BankAPI.approve(urlString: pending.approveURL, state: state)
                 working = false
                 if success {
-                    await BankAPI.refreshAccount(state: state)
                     withAnimation { done = true }
-                    try? await Task.sleep(nanoseconds: 1_600_000_000)
-                    dismiss()
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    dismiss()   // onDismiss refreshes home with the spin-down
                 }
             }
         }

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 enum BankAPI {
     // Injected at build time from the BANK_BASE_URL secret (public repo:
@@ -18,16 +19,24 @@ enum BankAPI {
         await MainActor.run { state.registered = (code == 200) }
     }
 
-    static func refreshAccount(state: AppState) async {
+    static func refreshAccount(state: AppState, animated: Bool = false) async {
         let user = await state.accountHolder
         guard !baseURL.isEmpty, let url = URL(string: "\(baseURL)/account/\(user)") else { return }
         guard let (data, resp) = try? await URLSession.shared.data(from: url),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let acct = try? JSONDecoder().decode(Account.self, from: data) else { return }
         await MainActor.run {
-            state.balance = acct.balance
-            state.currency = acct.currency
-            state.transactions = acct.transactions
+            if animated {
+                withAnimation(.easeInOut(duration: 1.0)) {
+                    state.balance = acct.balance
+                    state.currency = acct.currency
+                    state.transactions = acct.transactions
+                }
+            } else {
+                state.balance = acct.balance
+                state.currency = acct.currency
+                state.transactions = acct.transactions
+            }
         }
     }
 
