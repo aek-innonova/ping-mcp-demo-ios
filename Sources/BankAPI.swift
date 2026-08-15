@@ -8,22 +8,26 @@ enum BankAPI {
     }
 
     static func registerDevice(token: String, user: String, state: AppState) async {
-        guard !baseURL.isEmpty, let url = URL(string: "\(baseURL)/devices") else {
-            state.append("no BankBaseURL configured")
-            return
-        }
+        guard !baseURL.isEmpty, let url = URL(string: "\(baseURL)/devices") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["token": token, "user": user])
-        do {
-            let (_, resp) = try await URLSession.shared.data(for: req)
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            DispatchQueue.main.async { state.registrationStatus = code == 200 ? "registered as \(user)" : "registration failed (\(code))" }
-            state.append("device registration: HTTP \(code)")
-        } catch {
-            DispatchQueue.main.async { state.registrationStatus = "registration error" }
-            state.append("device registration error: \(error.localizedDescription)")
+        let code = (try? await URLSession.shared.data(for: req))
+            .flatMap { ($0.1 as? HTTPURLResponse)?.statusCode } ?? 0
+        await MainActor.run { state.registered = (code == 200) }
+    }
+
+    static func refreshAccount(state: AppState) async {
+        let user = await state.accountHolder
+        guard !baseURL.isEmpty, let url = URL(string: "\(baseURL)/account/\(user)") else { return }
+        guard let (data, resp) = try? await URLSession.shared.data(from: url),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let acct = try? JSONDecoder().decode(Account.self, from: data) else { return }
+        await MainActor.run {
+            state.balance = acct.balance
+            state.currency = acct.currency
+            state.transactions = acct.transactions
         }
     }
 
@@ -32,19 +36,9 @@ enum BankAPI {
         guard let url = URL(string: urlString) else { return false }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            let body = String(data: data, encoding: .utf8) ?? ""
-            if code == 200, body.contains("Approved") {
-                state.append("transfer APPROVED and executed")
-                return true
-            }
-            state.append("approve response: HTTP \(code)")
-            return false
-        } catch {
-            state.append("approve error: \(error.localizedDescription)")
-            return false
-        }
+        guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return false }
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let body = String(data: data, encoding: .utf8) ?? ""
+        return code == 200 && body.contains("Approved")
     }
 }

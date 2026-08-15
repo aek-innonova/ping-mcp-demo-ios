@@ -1,7 +1,7 @@
-// Agentic Bank - the maker-checker approver for the agentic-banking demo.
-// An AI agent can only REQUEST transfers; this app is where the human
-// approves them: a push notification carries the approval capability URL,
-// and the Approve action is gated by FaceID/passcode (authenticationRequired).
+// Agentic Bank — the maker-checker approver for the agentic-banking demo.
+// An AI agent can only REQUEST payments; this app is where the human releases
+// them. A push notification carries the transfer, and Approve is gated by
+// Face ID (authenticationRequired on the action, biometrics in-app).
 import SwiftUI
 import UserNotifications
 
@@ -11,16 +11,37 @@ struct AgenticBankApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
                 .environmentObject(appDelegate.state)
+                .preferredColorScheme(.light) // committed light fintech look
         }
     }
 }
 
+// MARK: - Models
+
+struct BankTx: Identifiable, Decodable {
+    let id: String
+    let from: String
+    let to: String
+    let amount: Double
+    let description: String
+    let direction: String   // "in" | "out"
+    var counterparty: String { direction == "out" ? to : from }
+}
+
+struct Account: Decodable {
+    let balance: Double
+    let currency: String
+    let transactions: [BankTx]
+}
+
 struct PendingApproval: Identifiable {
     let id = UUID()
-    let title: String
-    let body: String
+    let from: String
+    let to: String
+    let amountText: String
+    let reference: String
     let approveURL: String
 }
 
@@ -28,22 +49,14 @@ struct PendingApproval: Identifiable {
 final class AppState: ObservableObject {
     @Published var accountHolder: String = UserDefaults.standard.string(forKey: "accountHolder") ?? "alice"
     @Published var deviceToken: String?
-    @Published var registrationStatus: String = "not registered"
-    @Published var log: [String] = []
+    @Published var registered = false
+    @Published var balance: Double?
+    @Published var currency = "EUR"
+    @Published var transactions: [BankTx] = []
     @Published var pending: PendingApproval?
-
-    nonisolated func append(_ line: String) {
-        Task { @MainActor in
-            self.log.insert("\(Self.time()) \(line)", at: 0)
-            if self.log.count > 50 { self.log.removeLast() }
-        }
-    }
-
-    nonisolated static func time() -> String {
-        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
-        return f.string(from: Date())
-    }
 }
+
+// MARK: - Push / lifecycle
 
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     let state = AppState()
@@ -52,28 +65,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-
-        // Approve is FaceID/passcode-gated by iOS itself; works from the lock screen.
-        let approve = UNNotificationAction(
-            identifier: "APPROVE",
-            title: "Approve",
-            options: [.authenticationRequired]
-        )
-        let deny = UNNotificationAction(
-            identifier: "DENY",
-            title: "Deny",
-            options: [.destructive]
-        )
-        let category = UNNotificationCategory(
-            identifier: "TRANSFER_APPROVAL",
-            actions: [approve, deny],
-            intentIdentifiers: [],
-            options: []
-        )
-        center.setNotificationCategories([category])
-
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            self.state.append("notification permission: \(granted ? "granted" : "denied")")
+        let approve = UNNotificationAction(identifier: "APPROVE", title: "Approve", options: [.authenticationRequired])
+        let deny = UNNotificationAction(identifier: "DENY", title: "Deny", options: [.destructive])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: "TRANSFER_APPROVAL", actions: [approve, deny],
+                                   intentIdentifiers: [], options: [])
+        ])
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
             DispatchQueue.main.async { application.registerForRemoteNotifications() }
         }
         return true
@@ -82,45 +80,40 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func application(_ application: UIApplication,
                      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
-        state.deviceToken = token
-        state.append("APNs token acquired")
-        Task { await BankAPI.registerDevice(token: token, user: self.state.accountHolder, state: self.state) }
+        Task { @MainActor in
+            state.deviceToken = token
+            await BankAPI.registerDevice(token: token, user: state.accountHolder, state: state)
+            await BankAPI.refreshAccount(state: state)
+        }
     }
 
     func application(_ application: UIApplication,
-                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        state.append("APNs registration failed: \(error.localizedDescription)")
-    }
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {}
 
-    // Show notifications even when the app is foregrounded
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .sound]
     }
 
-    // Approve/Deny action from the (lock-screen) notification
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
-        guard let approveURL = info["approveURL"] as? String else {
-            state.append("notification without approveURL")
-            return
-        }
+        guard let approveURL = info["approveURL"] as? String else { return }
+        let pending = PendingApproval(
+            from: info["from"] as? String ?? state.accountHolder,
+            to: info["to"] as? String ?? "recipient",
+            amountText: info["amountText"] as? String ?? "",
+            reference: info["reference"] as? String ?? "",
+            approveURL: approveURL
+        )
         switch response.actionIdentifier {
         case "APPROVE":
-            state.append("approving via FaceID-gated action…")
-            await BankAPI.approve(urlString: approveURL, state: state)
+            _ = await BankAPI.approve(urlString: approveURL, state: state)
+            await BankAPI.refreshAccount(state: state)
         case "DENY":
-            state.append("denied transfer request")
+            break
         default:
-            // Tapped the notification body -> show an in-app approval card
-            let content = response.notification.request.content
-            state.pending = PendingApproval(
-                title: content.title,
-                body: content.body,
-                approveURL: approveURL
-            )
-            state.append("opened transfer request in app")
+            state.pending = pending   // tapped the body -> open in-app approval
         }
     }
 }
