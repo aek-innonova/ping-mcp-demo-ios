@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: macos-15
+    environment: production
     env:
       ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
