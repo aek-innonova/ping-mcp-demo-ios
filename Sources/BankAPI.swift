@@ -40,6 +40,20 @@ enum BankAPI {
         }
     }
 
+    // Open approvals straight from the server, so a missed push never strands
+    // a payment. The phone authenticates with its own APNs device token - the
+    // same capability that already receives approval links.
+    static func fetchPending(state: AppState) async {
+        let token = await state.deviceToken
+        guard !baseURL.isEmpty, let token,
+              let url = URL(string: "\(baseURL)/pending?device=\(token)") else { return }
+        struct PendingList: Decodable { let pending: [PendingApproval] }
+        guard let (data, resp) = try? await URLSession.shared.data(from: url),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let list = try? JSONDecoder().decode(PendingList.self, from: data) else { return }
+        await MainActor.run { state.waiting = list.pending }
+    }
+
     @discardableResult
     static func approve(urlString: String, state: AppState) async -> Bool {
         guard let url = URL(string: urlString) else { return false }

@@ -36,8 +36,8 @@ struct Account: Decodable {
     let transactions: [BankTx]
 }
 
-struct PendingApproval: Identifiable {
-    let id = UUID()
+struct PendingApproval: Identifiable, Decodable {
+    let id: String          // server's PT-... id (stable across push and fetch)
     let from: String
     let to: String
     let amountText: String
@@ -54,6 +54,9 @@ final class AppState: ObservableObject {
     @Published var currency = "EUR"
     @Published var transactions: [BankTx] = []
     @Published var pending: PendingApproval?
+    // Open approvals fetched from the server - the app does not depend on
+    // push delivery (Focus mode, force-quit, swiped-away banner).
+    @Published var waiting: [PendingApproval] = []
 }
 
 // MARK: - Push / lifecycle
@@ -84,6 +87,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             state.deviceToken = token
             await BankAPI.registerDevice(token: token, user: state.accountHolder, state: state)
             await BankAPI.refreshAccount(state: state)
+            await BankAPI.fetchPending(state: state)
         }
     }
 
@@ -100,6 +104,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let info = response.notification.request.content.userInfo
         guard let approveURL = info["approveURL"] as? String else { return }
         let pending = PendingApproval(
+            id: info["id"] as? String ?? UUID().uuidString,
             from: info["from"] as? String ?? state.accountHolder,
             to: info["to"] as? String ?? "recipient",
             amountText: info["amountText"] as? String ?? "",

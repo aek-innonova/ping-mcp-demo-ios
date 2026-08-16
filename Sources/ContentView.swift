@@ -35,11 +35,24 @@ func avatarColor(_ name: String) -> Color {
 
 struct RootView: View {
     @EnvironmentObject var state: AppState
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         HomeView()
             .fullScreenCover(item: $state.pending, onDismiss: {
-                Task { await BankAPI.refreshAccount(state: state, animated: true) }
+                Task {
+                    await BankAPI.refreshAccount(state: state, animated: true)
+                    await BankAPI.fetchPending(state: state)
+                }
             }) { p in ApprovalView(pending: p) }
+            .onChange(of: scenePhase) { _, phase in
+                // Coming to the foreground re-syncs open approvals - a missed
+                // or dismissed push must never strand a payment request.
+                guard phase == .active else { return }
+                Task {
+                    await BankAPI.refreshAccount(state: state)
+                    await BankAPI.fetchPending(state: state)
+                }
+            }
     }
 }
 
@@ -54,12 +67,62 @@ struct HomeView: View {
             VStack(spacing: 0) {
                 header
                 ScrollView {
-                    VStack(spacing: 14) { explainer; activity }.padding(16)
+                    VStack(spacing: 14) {
+                        if !state.waiting.isEmpty { waitingCard }
+                        explainer
+                        activity
+                    }.padding(16)
                 }
-                .refreshable { await BankAPI.refreshAccount(state: state) }
+                .refreshable {
+                    await BankAPI.refreshAccount(state: state)
+                    await BankAPI.fetchPending(state: state)
+                }
             }
         }
-        .task { await BankAPI.refreshAccount(state: state) }
+        .task {
+            await BankAPI.refreshAccount(state: state)
+            await BankAPI.fetchPending(state: state)
+        }
+    }
+
+    // Approvals waiting on the human - fetched from the server, so they show
+    // even when the push never arrived or was swiped away.
+    private var waitingCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("WAITING FOR YOU")
+                .font(.system(size: 11, weight: .bold)).tracking(1.1)
+                .foregroundStyle(Brand.muted.opacity(0.9)).padding(.leading, 2)
+            VStack(spacing: 0) {
+                ForEach(Array(state.waiting.enumerated()), id: \.element.id) { i, p in
+                    if i > 0 { Divider().overlay(Brand.cardLine) }
+                    Button { state.pending = p } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "hourglass")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 34, height: 34)
+                                .background(Brand.teal, in: Circle())
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("\(p.amountText) to \(p.to)")
+                                    .font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Brand.ink)
+                                Text(p.reference).font(.system(size: 11.5)).foregroundStyle(Brand.muted)
+                            }
+                            Spacer()
+                            Text("Review")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .background(Brand.approve, in: Capsule())
+                        }
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 4)
+            .background(.white, in: RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Brand.approve.opacity(0.35)))
+        }
     }
 
     private var header: some View {
